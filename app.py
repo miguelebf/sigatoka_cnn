@@ -55,7 +55,7 @@ model = MobileNetV2MultiClass(num_classes)
 # Para cargar el modelo
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-model.load_state_dict(torch.load("./model/best_model3.pth", map_location=device))
+model.load_state_dict(torch.load("./model/best_model.pth", map_location=device))
 model.eval()
 # Mover el modelo al dispositivo (GPU si está disponible)
 #model = model.to(device)
