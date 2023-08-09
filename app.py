@@ -2,11 +2,13 @@ from fastapi import FastAPI, UploadFile, File
 from fastapi.responses import JSONResponse, HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-
-import sys, os
+from PIL import Image
+from torchvision.transforms import functional as T
 from typing import List
 import uvicorn
 import cv2
+import io
+
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -17,36 +19,43 @@ import pkg_resources
 for dist in pkg_resources.working_set:
     print(dist.project_name, dist.version)
 app = FastAPI()
-origins = ["http://localhost", "http://localhost:4200", "https://clasificacion-sigatoka-cnn.web.app"]
+origins = ["http://localhost", "http://localhost:4200"]
 
 app.add_middleware(CORSMiddleware, allow_origins=origins, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 app.mount("/public", StaticFiles(directory="./public"), name="public")
 
-class MobileNetV2MultiLabel(nn.Module):
+
+
+
+class MobileNetV2MultiClass(nn.Module):
     def __init__(self, num_classes):
-        super(MobileNetV2MultiLabel, self).__init__()
+        super(MobileNetV2MultiClass, self).__init__()
         self.model = models.mobilenet_v2(pretrained=True)
         in_features = self.model.classifier[-1].in_features
         self.model.classifier = nn.Sequential(
             nn.Dropout(0.2),
-            nn.Linear(in_features, num_classes)
+            nn.Linear(in_features, num_classes),
+            nn.LogSoftmax(dim=1)
         )
 
     def forward(self, x):
         return self.model(x)
 
-# Número de clases en la clasificación multi-label (por ejemplo, 4 etapas: INITIAL, HEALTHY, LAST, INTERMEDIATE)
+# Número de clases en la clasificación multi-clase (por ejemplo, 4 clases: 'bueno', 'malo', 'regular' e 'indeterminado')
 num_classes = 4
+
+# Crear una instancia del modelo MobileNetV2 para clasificación multi-clase
+model = MobileNetV2MultiClass(num_classes)
 
 # Crear una instancia del modelo MobileNetV2 para clasificación multi-label
 
 
 # Cargar los pesos del modelo entrenado
 # Para cargar el modelo
-model = MobileNetV2MultiLabel(num_classes)
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-model.load_state_dict(torch.load("./model/best_model.pth", map_location=device))
+model.load_state_dict(torch.load("./model/best_model3.pth", map_location=device))
 model.eval()
 # Mover el modelo al dispositivo (GPU si está disponible)
 #model = model.to(device)
@@ -68,23 +77,36 @@ async def predict(files: List[UploadFile] = File(...)):
     
     try:
         for file in files:
-            img = await file.read()
-            arr = to_arr(img, cv2.IMREAD_COLOR)
-            arr = cv2.resize(arr, (224, 224), interpolation=cv2.INTER_LINEAR)
-            arr = arr / 255
-            images.append(arr)
+            uploaded_image = await file.read()
+            uploaded_image = Image.open(io.BytesIO(uploaded_image))
+          # arr = to_arr(img, cv2.IMREAD_COLOR)
+          # arr = cv2.resize(arr, (224, 224), interpolation=cv2.INTER_LINEAR)
+          # arr = arr / 255
+           # Aplicar las transformaciones necesarias para que coincidan con las que se usaron durante el entrenamiento
+            # Asegurarse de que la imagen sea cuadrada (en este caso, 240x240)
+            uploaded_image = T.resize(uploaded_image, 240)
+            uploaded_image = T.center_crop(uploaded_image, 240)
 
-        images = np.array(images)
+            # Convertir la imagen en un tensor y normalizarla
+            uploaded_image = T.to_tensor(uploaded_image)
+            uploaded_image = T.normalize(uploaded_image, mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+
+            # Agregar una dimensión adicional para el batch (el modelo espera un batch de imágenes)
+            uploaded_image = uploaded_image.unsqueeze(0)
+
+            # Mover la imagen al dispositivo (GPU si está disponible)
+            uploaded_image = uploaded_image.to(device)
+            images.append(uploaded_image)
+                        
+
+            #images = np.array(images)
 
         # Convertir las imágenes numpy a tensores de PyTorch y moverlos al dispositivo
-        images = torch.from_numpy(images).float()  # Convertir a tensor float32
-        images = images.permute(0, 3, 1, 2)  # Cambiar el orden de las dimensiones para que sea (N, C, H, W)
-
-        # Mover los tensores al dispositivo (GPU si está disponible)
-        images = images.to(device)
-
+        # Aplicar las transformaciones necesarias para que coincidan con las que se usaron durante el entrenamiento
+        # Asegurarse de que la imagen sea cuadrada (en este caso, 240x240)
+        
         # Realizar la inferencia
-        y = model(images)
+        y = model(uploaded_image)
         print(y)
         for i in range(len(y)):
             
@@ -93,9 +115,6 @@ async def predict(files: List[UploadFile] = File(...)):
         print(result)
         return JSONResponse(content=result)
     except Exception as e:
-        exc_type, exc_obj, exc_tb = sys.exc_info()
-        fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
-        print(exc_type, fname, exc_tb.tb_lineno)
         print(e)
         pass
         
@@ -109,4 +128,5 @@ def to_arr(img, cv2_img_flag=0):
     return cv2.imdecode(img_array, cv2_img_flag)
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="127.0.0.1", port=8000)
+    
