@@ -19,7 +19,7 @@ import pkg_resources
 for dist in pkg_resources.working_set:
     print(dist.project_name, dist.version)
 app = FastAPI()
-origins = ["http://localhost", "http://localhost:4200"]
+origins = ["http://localhost", "http://localhost:4200","https://clasificacion-sigatoka-cnn.web.app"]
 
 app.add_middleware(CORSMiddleware, allow_origins=origins, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
